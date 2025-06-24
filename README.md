@@ -1,6 +1,8 @@
 **parrot\_anafi\_dev\_guide**
 
-Pacote de código para início rápido no desenvolvimento do VANT Parrot Anafi.
+<p align="center">
+  <iframe width="560" height="315" src="https://www.youtube.com/embed/3iV7Za-PGTo?autoplay=1" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+</p>
 
 ---
 
