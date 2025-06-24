@@ -1,0 +1,72 @@
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import NavSatFix
+from std_msgs.msg import Float32MultiArray
+from geometry_msgs.msg import Vector3Stamped
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+import math
+
+class GPSPositionNode(Node):
+    def __init__(self):
+        super().__init__('gps_position_node')
+        
+        self.first_sample = None
+        self.current_yaw = None
+
+        qos_profile = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+        
+        self.publisher_ = self.create_publisher(Float32MultiArray, '/anafi/drone/position_global', qos_profile)
+        self.gps_subscription = self.create_subscription(NavSatFix, '/anafi/drone/gps/location', self.gps_callback, qos_profile)
+        self.rpy_subscription = self.create_subscription(Vector3Stamped, '/anafi/drone/rpy', self.rpy_callback, qos_profile)
+        #self.timer = self.create_timer(0.1, self.publish_message)
+
+    def gps_callback(self, msg):
+        current_lat = msg.latitude
+        current_lon = msg.longitude
+        current_alt = msg.altitude
+
+        if self.first_sample is None:
+            self.first_sample = (current_lat, current_lon, current_alt)
+            return
+
+        delta_lat = current_lat - self.first_sample[0]
+        delta_lon = current_lon - self.first_sample[1]
+        delta_alt = current_alt - self.first_sample[2]
+
+        # Conversão para metros
+        lat_to_m = 111320
+        lon_to_m = 40008000 * math.cos(math.radians(self.first_sample[0])) / 360
+
+        y = delta_lat * lat_to_m
+        x = delta_lon * lon_to_m
+        z = delta_alt
+
+        array_msg = Float32MultiArray()
+        array_msg.data = [x, y, z, self.current_yaw if self.current_yaw is not None else 0.0]
+        self.publisher_.publish(array_msg)
+        self.get_logger().info(f'Publishing global position: x={x:.6f}m, y={y:.6f}m, z={z:.6f}m, yaw={self.current_yaw:.6f}')
+
+    def rpy_callback(self, msg):
+        self.current_yaw = math.radians(msg.vector.z)
+
+        if self.first_sample is None:
+            self.first_sample_yaw = (self.current_yaw)
+            return
+
+        self.current_yaw = self.current_yaw - self.first_sample_yaw
+
+        #self.get_logger().info(f'Updated yaw: {self.current_yaw:.6f}')
+
+def main(args=None):
+    rclpy.init(args=args)
+    gps_position_node = GPSPositionNode()
+    rclpy.spin(gps_position_node)
+    gps_position_node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
