@@ -26,6 +26,9 @@
 
 Este repositório contém os pacotes ROS do Parrot Anafi modificados para eliminar funções que atrapalham a navegação do VANT. Inclui versões para simulação e controle em drones reais.
 
+![Diagrama](./Anafi_github_esquematico.svg)
+
+
 ## Downloads
 
 * **Pacotes personalizados (modificados):**
