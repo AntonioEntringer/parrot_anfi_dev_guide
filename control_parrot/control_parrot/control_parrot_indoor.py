@@ -72,10 +72,10 @@ class ParrotControl(Node):
                 # Constantes físicas e parâmetros fixos
                 self.g = 9.81                                  # gravidade [m/s²]
                 self.tilt_max = 15                             # inclinação máxima [graus]
-                self.vel_max = 2                               # velocidade máxima [m/s]
-                self.zdot_max = 1                              # velocidade vertical máxima [m/s]
-                self.kp = 13.89                              # ganho proporcional (posição)
-                self.kd = 3.16                                # ganho derivativo (posição)
+                self.vel_max = 40                               # velocidade máxima [m/s]
+                self.zdot_max = 2                              # velocidade vertical máxima [m/s]
+                self.kp = 3*13.89                           # ganho proporcional (posição)
+                self.kd = 15*3.16                          # ganho derivativo (posição)
                 self.kd2 = 5                                 # ganho derivativo (velocidade)
                 self.kp_z = 1                                # ganho proporcional (controle em Z)
                 self.kp_psi = 1                                # ganho proporcional (yaw)
@@ -85,18 +85,25 @@ class ParrotControl(Node):
                 # Variáveis de estado e trajetória
                 self.psi_d = 0                                 # yaw desejado [rad]
                 self.xd_old = x                              # posição desejada anterior
-                self.r = 1                                     # raio da trajetória [m]
-                self.w = (2 * np.pi) / 40                      # frequência angular da trajetória [rad/s]
+                self.r = 1.2                                     # raio da trajetória [m]
+                self.w = (2 * np.pi) / 25                      # frequência angular da trajetória [rad/s]
                 self.t_inicial = time.time()                   # tempo inicial
 
+                # Espaço de estados
+                self.Kv = np.diag([0.0314, 0.0324,  0.3466,  0.9331])
+                self.Ku = np.diag([0.10175, 0.1079,0.3993, 1.1153])
+
+                # variáveis para filtro de psi
+                self.psi_prev      = psi
+                self.psi_dot_prev  = 0.0
+                self.t_prev        = self.t_inicial
 
             t = time.time() - self.t_inicial
 
             # trajetória desejada
-            self.xd = np.array([  self.r *               np.sin(self.w * t),                      self.r * np.sin(2 * self.w * t),    1])  # lemniscata
-            self.xd_dot = np.array([   self.r * self.w *      np.cos(self.w * t),         2 * self.r * self.w * np.cos(2 * self.w * t),    0])
-            self.xd_2dot = np.array([  -self.r * self.w ** 2 * np.sin(self.w * t),   -4 * self.r * self.w ** 2 * np.sin(2 * self.w * t),    0])
-
+            self.xd = np.array([  self.r *               np.sin(self.w * t),                      self.r * np.sin(2 * self.w * t),             1])  # lemniscata
+            self.xd_dot = np.array([   self.r * self.w *      np.cos(self.w * t),         2 * self.r * self.w * np.cos(2 * self.w * t),        0])
+            self.xd_2dot = np.array([  -self.r * self.w ** 2 * np.sin(self.w * t),   -4 * self.r * self.w ** 2 * np.sin(2 * self.w * t),       0])
 
             # Publish d_trajectory
             traj_msg = Float32MultiArray()
@@ -109,41 +116,19 @@ class ParrotControl(Node):
 
             
             # controle linear XY
-            x_dot = np.array([[self.x_dot[0]], [self.x_dot[1]]])
-            x_dot = np.dot(R.T, x_dot)  
-            x_ = np.array([[x[0]], [x[1]]])
-            xd_ = np.array([[self.xd[0]], [self.xd[1]]])
-            xd_dot_ = np.array([[self.xd_dot[0]], [self.xd_dot[1]]])
-            xd_2dot_ = np.array([[self.xd_2dot[0]], [self.xd_2dot[1]]])
-
-
-
-            u_ref = xd_2dot_ + self.kd * (xd_dot_ - x_dot) + self.kp * (xd_ - x_)
-            u_ref = self.kd2 * (u_ref - x_dot)
-            u_ref = np.dot(R, u_ref) 
+            x_ = np.array([[x[0]], [x[1]]]) #posição drone
+            x_dot = np.dot(R.T,np.array([[self.x_dot[0]], [self.x_dot[1]]])) #velocidade drone
             
-            # LEI DE CONTROLE EMPIRICO
-            #self.U = self.U_inv @ u_ref
-            # LEI DE CONTROLE CASO 1
-            #self.U = np.dot(np.array([[9.72, 0], [0, 9.24]]),self.xd_2dot_)
-            # LEI DE CONTROLE CASO 2
-            self.U = np.dot(np.array([[0.1, 0], [0, 0.1]]), u_ref) - np.dot(np.array([[0.005, 0], [0, 0.005]]), x_dot)
-            # LEI DE CONTROLE CASO 3
-            #self.U = np.dot(np.array([[9.73, 0], [0, 9.93]]), self.xd_2dot_) - np.dot(np.array([[0.24, 0], [0, 0.29]]), vel) - np.dot(np.array([[0.01, 0],[0, 0.08]]),np.multiply(vel,vel))
+            xd_ = np.array([[self.xd[0]], [self.xd[1]]]) #posição desejada
+            xd_dot_ = np.array([[self.xd_dot[0]], [self.xd_dot[1]]]) #velocidade desejada
+            xd_2dot_ = np.array([[self.xd_2dot[0]], [self.xd_2dot[1]]]) #aceleração desejada
 
 
-            self.U = np.maximum(-self.tilt_max, np.minimum(self.tilt_max, self.U))
-    
-            # controle linear Z
-            zdot_ref = self.kp_z * (self.xd[2] - self.x[2]) + self.xd_dot[2] + self.xd_2dot[2]
-            zdot_ref = max(-self.zdot_max, min(self.zdot_max, zdot_ref))
-
-            # controlador angular z
-            delta_x = self.xd[0] - self.xd_old[0]
+            delta_x = self.xd[0] - self.xd_old[0]             # Psi desejado
             delta_y = self.xd[1] - self.xd_old[1]
             if abs(delta_x) > 1e-6 or abs(delta_y) > 1e-6:
                 self.psi_d = np.arctan2(delta_y, delta_x)
-                #self.psi_d = -np.pi/2
+                #self.psi_d = 0* (-np.pi/2) #apenas para fixar em caso de teste
             # Atualiza a posição desejada anterior
             self.xd_old = self.xd.copy()
             psi_erro = self.psi_d - psi
@@ -153,18 +138,43 @@ class ParrotControl(Node):
                 else:
                     psi_erro += 2*np.pi
 
-            # controle Yaw
-            yaw_ref = (self.kp_psi * psi_erro) * 180/np.pi
+            #Calculo da velocidade psi
+            t_now    = time.time() - self.t_inicial 
+            dt       = t_now - self.t_prev
+            raw_dot  = (psi - self.psi_prev) / dt
+            alpha    = 0.7 
+            psi_dot  = alpha * self.psi_dot_prev + (1 - alpha) * raw_dot
 
-            print('\n\nRoll', round(float(-self.U[1]), 4), 'Pitch', round(float(self.U[0]), 4))
-            print('Vel_ref_X', round(float(u_ref[0]), 4), 'Vel_ref_Y', round(float(u_ref[1]), 4),'Vel_ref_z:',zdot_ref)
-            print('tempo:', t)
 
+
+            yaw_ref = (self.kp_psi * psi_erro) * 180/np.pi             # Yaw ref
+            u_ref = xd_2dot_ + self.kd * (xd_dot_ - x_dot) + self.kp * (xd_ - x_)            # XY ref
+            u_ref = self.kd2 * (u_ref - x_dot)
+            u_ref = np.dot(R, u_ref) 
+            zdot_ref = self.kp_z * (self.xd[2] - self.x[2]) + self.xd_dot[2] + self.xd_2dot[2]            # Z ref
+
+            
+            
+            u_vec_ = np.array([float(u_ref[0]),float(u_ref[1]),float(zdot_ref),float(yaw_ref)])            
+            v_vec = np.array([float(x_dot[0]),float(x_dot[1]),float(self.x_dot[2]),float(psi_dot)])
+            
+            
+            
+            
+            U_vec = np.dot(u_vec_, self.Ku) - np.dot(v_vec, self.Kv)
+
+            #Limites
+            pitch_cmd = float(np.clip(U_vec[0], -self.tilt_max, self.tilt_max))
+            roll_cmd  = float(np.clip(-U_vec[1], -self.tilt_max, self.tilt_max))
+            gaz_cmd   = float(np.clip(U_vec[2], -self.zdot_max, self.zdot_max))
+            yaw_cmd   = float(U_vec[3])
+
+            # preenche e publica
             self.command.header.stamp = self.get_clock().now().to_msg()
-            self.command.roll = float(-self.U[1, 0])
-            self.command.pitch = float(self.U[0, 0])
-            self.command.gaz = float(zdot_ref)
-            self.command.yaw = float(yaw_ref)
+            self.command.roll  = roll_cmd
+            self.command.pitch = pitch_cmd
+            self.command.gaz   = gaz_cmd
+            self.command.yaw   = yaw_cmd
             self.publisher_.publish(self.command)
 
 
